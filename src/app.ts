@@ -25,11 +25,11 @@ app.use(helmet());
 app.use(cors());
 app.options("*", cors());
 
-// Parse json request body
-app.use(express.json());
+// Parse json request body with increased size limits
+app.use(express.json({ limit: "200mb" }));
 
-// Parse urlencoded request body
-app.use(express.urlencoded({ extended: true }));
+// Parse urlencoded request body with increased size limits
+app.use(express.urlencoded({ extended: true, limit: "200mb" }));
 
 // Sanitize request data
 app.use(xss());

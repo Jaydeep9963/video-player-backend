@@ -75,7 +75,7 @@ const fileFilter = (
 const upload = multer({
   storage,
   limits: {
-    fileSize: 50 * 1024 * 1024, // Default to 50MB limit for shorts
+    fileSize: 200 * 1024 * 1024, // Increased to 200MB limit for shorts
   },
   fileFilter,
 });
