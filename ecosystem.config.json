@@ -1,0 +1,19 @@
+{
+  "apps": [
+    {
+      "name": "video-player-backend",
+      "script": "dist/index.js",
+      "instances": 1,
+      "autorestart": true,
+      "cwd": "/Users/adite_technologies_llp/Documents/video_player_backend",
+      "watch": false,
+      "time": true,
+      "env": {
+        "NODE_ENV": "production"
+      },
+      "env_development": {
+        "NODE_ENV": "development"
+      }
+    }
+  ]
+}
