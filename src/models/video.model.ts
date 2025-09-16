@@ -8,7 +8,7 @@ export interface IVideo extends mongoose.Document {
   youtubeUrl?: string;
   platform: "upload" | "youtube";
   thumbnailPath: string;
-  duration: number;
+  durationFormatted: string;
   category: mongoose.Types.ObjectId;
   subcategory?: mongoose.Types.ObjectId;
   artist?: mongoose.Types.ObjectId;
@@ -50,10 +50,7 @@ const videoSchema = new mongoose.Schema<IVideo>(
       required: true,
       trim: true,
     },
-    duration: {
-      type: Number,
-      default: 0,
-    },
+    durationFormatted: { type: String, default: "0:00" },
     category: {
       type: mongoose.SchemaTypes.ObjectId,
       ref: "Category",

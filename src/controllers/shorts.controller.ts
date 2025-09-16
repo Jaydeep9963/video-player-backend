@@ -9,6 +9,7 @@ import {
   getYouTubeVideoInfo,
   isValidYouTubeUrl,
 } from "../utils/youtubeProcessor";
+import { formatDuration } from "../utils/formatDuration";
 
 /**
  * Upload and create a short video
@@ -23,59 +24,43 @@ export const uploadShorts = async (req: Request, res: Response) => {
     let fileName: string | undefined;
     let filePath: string | undefined;
     let thumbnailPath: string;
-    let duration = 0;
+    let durationSeconds = 0;
+    let durationFormatted = "00:00";
 
     if (platform === "youtube") {
-      // For YouTube shorts
-      if (!youtubeUrl) {
+      // 🔹 Validate YouTube
+      if (!youtubeUrl || !isValidYouTubeUrl(youtubeUrl)) {
         return res
           .status(httpStatus.BAD_REQUEST)
-          .send({ message: "YouTube URL is required for YouTube platform" });
+          .send({
+            message: "Valid YouTube URL is required for YouTube platform",
+          });
       }
 
-      // Validate YouTube URL
-      if (!isValidYouTubeUrl(youtubeUrl)) {
-        return res
-          .status(httpStatus.BAD_REQUEST)
-          .send({ message: "Invalid YouTube URL" });
-      }
-
-      const files = req.files as {
-        [fieldname: string]: Express.Multer.File[];
-      };
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
       const thumbnailFile = files?.thumbnail?.[0];
-
       if (!thumbnailFile) {
         return res
           .status(httpStatus.BAD_REQUEST)
           .send({ message: "Thumbnail file is required" });
       }
-
       thumbnailPath = thumbnailFile.path;
 
-      // Get duration from YouTube API (or fallback to request body)
+      // 🔹 Get info from YouTube
       try {
         const youtubeInfo = await getYouTubeVideoInfo(youtubeUrl);
-        duration = youtubeInfo.duration;
-        console.log(`YouTube shorts duration: ${duration} seconds`);
+        durationSeconds = youtubeInfo.duration;
+        durationFormatted = formatDuration(durationSeconds);
 
-        // Optionally use YouTube title/description if not provided
-        if (!title && youtubeInfo.title) {
-          req.body.title = youtubeInfo.title;
-        }
+        if (!title && youtubeInfo.title) req.body.title = youtubeInfo.title;
         if (!description && youtubeInfo.description) {
-          req.body.description = youtubeInfo.description?.substring(0, 500); // Limit description length
+          req.body.description = youtubeInfo.description.substring(0, 500);
         }
       } catch (error) {
-        console.warn(
-          "Could not get YouTube shorts info, using fallback:",
-          error
-        );
-        // Fallback to request body duration or 0
-        duration = req.body.duration ? Number(req.body.duration) : 0;
+        console.warn("Could not get YouTube video info:", error);
       }
     } else {
-      // For uploaded shorts
+      // 🔹 Upload shorts case
       const shortsFile = (
         req.files as { [fieldname: string]: Express.Multer.File[] }
       )?.shorts?.[0];
@@ -88,7 +73,6 @@ export const uploadShorts = async (req: Request, res: Response) => {
           .status(httpStatus.BAD_REQUEST)
           .send({ message: "No shorts file uploaded" });
       }
-
       fileName = shortsFile.filename;
       filePath = shortsFile.path;
 
@@ -97,20 +81,17 @@ export const uploadShorts = async (req: Request, res: Response) => {
           .status(httpStatus.BAD_REQUEST)
           .send({ message: "Thumbnail file is required" });
       }
-
       thumbnailPath = thumbnailFile.path;
 
-      // Get actual video duration using ffprobe
       try {
-        duration = await getVideoDuration(filePath);
+        durationSeconds = await getVideoDuration(filePath);
+        durationFormatted = formatDuration(durationSeconds);
       } catch (error) {
-        console.warn("Could not get video duration:", error);
-        // If ffprobe fails, use duration from request body or default to 0
-        duration = req.body.duration ? Number(req.body.duration) : 0;
+        console.warn("Could not get uploaded shorts duration:", error);
       }
     }
 
-    // Create shorts record
+    // 🔹 Create shorts record
     const shorts = await Shorts.create({
       title,
       description,
@@ -119,13 +100,14 @@ export const uploadShorts = async (req: Request, res: Response) => {
       youtubeUrl: platform === "youtube" ? youtubeUrl : undefined,
       platform,
       thumbnailPath,
-      duration,
+      durationFormatted, // ✅ only formatted
       views: 0,
       isPublished: true,
     });
 
     return res.status(httpStatus.CREATED).send(shorts);
   } catch (error) {
+    console.error("Shorts upload error:", error);
     if (error instanceof mongoose.Error.ValidationError) {
       return res
         .status(httpStatus.BAD_REQUEST)
@@ -149,15 +131,12 @@ export const getShorts = async (req: Request, res: Response) => {
 
     const filter: any = { isPublished: true };
 
-    // Apply platform filter if provided
     if (platform) filter.platform = platform;
 
-    // Text search if provided (Spotify-like search)
     if (search) {
       filter.$or = [
         { title: { $regex: search, $options: "i" } },
         { description: { $regex: search, $options: "i" } },
-        { $text: { $search: search as string } },
       ];
     }
 
@@ -167,13 +146,47 @@ export const getShorts = async (req: Request, res: Response) => {
 
     const shorts = await Shorts.find(filter, null, options);
 
-    return res.status(httpStatus.OK).send(shorts);
+    const results = await Promise.all(
+      shorts.map(async (short) => {
+        const obj = short.toObject();
+
+        // 🔹 Fix missing YouTube durationFormatted
+        if (
+          obj.platform === "youtube" &&
+          obj.durationFormatted === "00:00" &&
+          obj.youtubeUrl
+        ) {
+          try {
+            const ytInfo = await getYouTubeVideoInfo(obj.youtubeUrl);
+            const formatted = formatDuration(ytInfo.duration);
+
+            if (ytInfo.duration > 0) {
+              await Shorts.findByIdAndUpdate(obj._id, {
+                durationFormatted: formatted,
+              });
+              obj.durationFormatted = formatted;
+            }
+          } catch (err) {
+            console.warn(
+              `[WARN] Could not fetch YouTube short duration for: ${obj.youtubeUrl}`,
+              err
+            );
+          }
+        }
+
+        return obj;
+      })
+    );
+
+    return res.status(httpStatus.OK).send(results);
   } catch (error) {
+    console.error("Error in getShorts:", error);
     return res
       .status(httpStatus.INTERNAL_SERVER_ERROR)
       .send({ message: "Error fetching shorts" });
   }
 };
+
 
 /**
  * Get a short by ID

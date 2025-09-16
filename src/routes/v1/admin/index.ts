@@ -5,33 +5,38 @@ import searchRoute from './search.route';
 import categoryRoute from './category.route';
 import subcategoryRoute from './subcategory.route';
 import artistRoute from './artist.route';
+import notificationRoute from './notification.route';
 
 const router = express.Router();
 
 const adminRoutes = [
   {
-    path: '/videos',
+    path: "/videos",
     route: videoRoute,
   },
   {
-    path: '/shorts',
+    path: "/shorts",
     route: shortsRoute,
   },
   {
-    path: '/search',
+    path: "/search",
     route: searchRoute,
   },
   {
-    path: '/categories',
+    path: "/categories",
     route: categoryRoute,
   },
   {
-    path: '/subcategories',
+    path: "/subcategories",
     route: subcategoryRoute,
   },
   {
-    path: '/artists',
+    path: "/artists",
     route: artistRoute,
+  },
+  {
+    path: "/notification",
+    route: notificationRoute,
   },
 ];
 

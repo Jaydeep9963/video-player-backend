@@ -15,6 +15,7 @@ export const getVideoDuration = (videoPath: string): Promise<number> => {
         reject(err);
         return;
       }
+
       resolve(metadata.format.duration || 0);
     });
   });

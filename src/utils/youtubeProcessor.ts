@@ -1,55 +1,35 @@
-import ytdl from "ytdl-core";
+import play from "play-dl";
 
 /**
  * Get YouTube video information including duration
- * @param {string} youtubeUrl - YouTube video URL
- * @returns {Promise<{duration: number, title?: string, description?: string}>}
  */
 export const getYouTubeVideoInfo = async (
   youtubeUrl: string
-): Promise<{
-  duration: number;
-  title?: string;
-  description?: string;
-}> => {
+): Promise<{ duration: number; title?: string; description?: string }> => {
   try {
-    // Validate if it's a valid YouTube URL
-    if (!ytdl.validateURL(youtubeUrl)) {
+    if (!play.yt_validate(youtubeUrl)) {
       throw new Error("Invalid YouTube URL");
     }
 
-    // Get video info
-    const info = await ytdl.getInfo(youtubeUrl);
+    const info = await play.video_basic_info(youtubeUrl);
 
-    // Extract duration in seconds
-    const duration = parseInt(info.videoDetails.lengthSeconds) || 0;
+    const duration = info.video_details.durationInSec ?? 0;
+    const title = info.video_details.title;
+    const description = info.video_details.description || undefined;
 
-    // Optional: Extract title and description
-    const title = info.videoDetails.title;
-    const description = info.videoDetails.description || undefined;
-
-    return {
-      duration,
-      title,
-      description,
-    };
+    return { duration, title, description };
   } catch (error) {
     console.warn("Could not get YouTube video info:", error);
-    // If YouTube info extraction fails, return fallback values
-    return {
-      duration: 0,
-    };
+    return { duration: 0 };
   }
 };
 
 /**
  * Validate YouTube URL
- * @param {string} url - URL to validate
- * @returns {boolean}
  */
 export const isValidYouTubeUrl = (url: string): boolean => {
   try {
-    return ytdl.validateURL(url);
+    return play.yt_validate(url) === "video"; // must return "video"
   } catch {
     return false;
   }
