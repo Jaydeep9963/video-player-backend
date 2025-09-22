@@ -225,22 +225,116 @@ export const getShortById = async (req: Request, res: Response) => {
 export const updateShort = async (req: Request, res: Response) => {
   try {
     const { shortsId } = req.params;
-    const { title, description, isPublished } = req.body;
+    const { title, description, isPublished, platform, youtubeUrl } =
+      req.body as any;
 
-    const shorts = await Shorts.findById(shortsId);
-    if (!shorts) {
+    const existing = await Shorts.findById(shortsId);
+    if (!existing) {
       return res
         .status(httpStatus.NOT_FOUND)
         .send({ message: "Shorts not found" });
     }
 
-    const updatedShorts = await Shorts.findByIdAndUpdate(
-      shortsId,
-      { title, description, isPublished },
-      { new: true }
-    );
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    const shortsFile = files?.shorts?.[0];
+    const thumbnailFile = files?.thumbnail?.[0];
 
-    return res.status(httpStatus.OK).send(updatedShorts);
+    const targetPlatform: "upload" | "youtube" = (platform as any) || existing.platform;
+
+    let newFileName = existing.fileName;
+    let newFilePath = existing.filePath;
+    let newYoutubeUrl = existing.youtubeUrl;
+    let newThumbnailPath = existing.thumbnailPath;
+    let newDurationFormatted = existing.durationFormatted || "00:00";
+
+    if (targetPlatform === "youtube") {
+      if (youtubeUrl && !isValidYouTubeUrl(youtubeUrl)) {
+        return res
+          .status(httpStatus.BAD_REQUEST)
+          .send({ message: "Valid YouTube URL is required" });
+      }
+
+      if (!existing.youtubeUrl && !youtubeUrl && existing.platform !== "youtube") {
+        return res
+          .status(httpStatus.BAD_REQUEST)
+          .send({ message: "youtubeUrl is required when switching to YouTube" });
+      }
+
+      if (youtubeUrl) newYoutubeUrl = youtubeUrl;
+
+      try {
+        const info = await getYouTubeVideoInfo(newYoutubeUrl!);
+        newDurationFormatted = formatDuration(info.duration);
+        if (!title && info.title) req.body.title = info.title;
+        if (!description && info.description) {
+          req.body.description = info.description.substring(0, 500);
+        }
+      } catch (e) {
+        console.warn("Could not get YouTube short info:", e);
+      }
+
+      if (existing.platform === "upload") {
+        if (existing.filePath && fs.existsSync(existing.filePath)) {
+          try {
+            fs.unlinkSync(existing.filePath);
+          } catch {}
+        }
+        newFileName = undefined;
+        newFilePath = undefined;
+      }
+    } else {
+      // targetPlatform === 'upload'
+      if (existing.platform === "youtube" && !shortsFile) {
+        return res.status(httpStatus.BAD_REQUEST).send({
+          message: "Shorts file is required when switching from YouTube to upload",
+        });
+      }
+
+      if (shortsFile) {
+        if (existing.filePath && fs.existsSync(existing.filePath)) {
+          try {
+            fs.unlinkSync(existing.filePath);
+          } catch {}
+        }
+        newFileName = shortsFile.filename;
+        newFilePath = shortsFile.path;
+
+        try {
+          const seconds = await getVideoDuration(newFilePath);
+          newDurationFormatted = formatDuration(seconds);
+        } catch (e) {
+          console.warn("Could not get shorts duration:", e);
+        }
+      }
+
+      if (existing.platform === "youtube" || platform === "upload") {
+        newYoutubeUrl = undefined;
+      }
+    }
+
+    if (thumbnailFile) {
+      if (existing.thumbnailPath && fs.existsSync(existing.thumbnailPath)) {
+        try {
+          fs.unlinkSync(existing.thumbnailPath);
+        } catch {}
+      }
+      newThumbnailPath = thumbnailFile.path;
+    }
+
+    if (typeof title !== "undefined") existing.title = title;
+    if (typeof description !== "undefined") existing.description = description;
+    if (typeof isPublished !== "undefined") existing.isPublished = isPublished;
+
+    existing.platform = targetPlatform;
+    existing.youtubeUrl = newYoutubeUrl;
+    existing.fileName = newFileName;
+    existing.filePath = newFilePath;
+    existing.thumbnailPath = newThumbnailPath;
+    existing.durationFormatted = newDurationFormatted;
+
+    await existing.save();
+
+    return res.status(httpStatus.OK).send(existing);
   } catch (error) {
     return res
       .status(httpStatus.INTERNAL_SERVER_ERROR)

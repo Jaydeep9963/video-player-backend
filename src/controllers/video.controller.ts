@@ -235,8 +235,8 @@ export const getVideo = async (req: Request, res: Response) => {
  */
 export const updateVideo = async (req: Request, res: Response) => {
   try {
-
-    const { category, subcategory } = req.body;
+    const { category, subcategory, platform, youtubeUrl, title, description } =
+      req.body as any;
 
     // Validate category exists (if provided)
     if (category) {
@@ -265,18 +265,130 @@ export const updateVideo = async (req: Request, res: Response) => {
       }
     }
 
-    const video = await Video.findByIdAndUpdate(req.params.videoId, req.body, {
-      new: true,
-      runValidators: true,
-    });
-
-    if (!video) {
+    // Load existing video
+    const existing = await Video.findById(req.params.videoId);
+    if (!existing) {
       return res
         .status(httpStatus.NOT_FOUND)
         .send({ message: "Video not found" });
     }
 
-    return res.status(httpStatus.OK).send(video);
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    const videoFile = files?.video?.[0];
+    const thumbnailFile = files?.thumbnail?.[0];
+
+    // Determine target platform
+    const targetPlatform: "upload" | "youtube" = (platform as any) || existing.platform;
+
+    // Prepare updates
+    let newFileName = existing.fileName;
+    let newFilePath = existing.filePath;
+    let newYoutubeUrl = existing.youtubeUrl;
+    let newThumbnailPath = existing.thumbnailPath;
+    let newDurationFormatted = existing.durationFormatted || "0:00";
+
+    // Handle platform-specific changes
+    if (targetPlatform === "youtube") {
+      // If switching to YouTube, require a valid URL
+      if (youtubeUrl && !isValidYouTubeUrl(youtubeUrl)) {
+        return res
+          .status(httpStatus.BAD_REQUEST)
+          .send({ message: "Valid YouTube URL is required" });
+      }
+
+      if (!existing.youtubeUrl && !youtubeUrl && existing.platform !== "youtube") {
+        return res
+          .status(httpStatus.BAD_REQUEST)
+          .send({ message: "youtubeUrl is required when switching to YouTube" });
+      }
+
+      // Update URL if provided
+      if (youtubeUrl) newYoutubeUrl = youtubeUrl;
+
+      // Try to refresh duration and optionally title/description from YouTube API
+      try {
+        const info = await getYouTubeVideoInfo(newYoutubeUrl!);
+        newDurationFormatted = formatDuration(info.duration);
+        if (!title && info.title) req.body.title = info.title;
+        if (!description && info.description) {
+          req.body.description = info.description.substring(0, 500);
+        }
+      } catch (e) {
+        // Non-blocking
+        console.warn("Could not get YouTube video info:", e);
+      }
+
+      // Clear upload-specific fields when switching to YouTube
+      if (existing.platform === "upload") {
+        // Delete old uploaded file if present
+        if (existing.filePath && fs.existsSync(existing.filePath)) {
+          try {
+            fs.unlinkSync(existing.filePath);
+          } catch {}
+        }
+        newFileName = undefined;
+        newFilePath = undefined;
+      }
+    } else {
+      // targetPlatform === 'upload'
+      if (existing.platform === "youtube" && !videoFile) {
+        return res.status(httpStatus.BAD_REQUEST).send({
+          message: "Video file is required when switching from YouTube to upload",
+        });
+      }
+
+      if (videoFile) {
+        // Replace old file if different
+        if (existing.filePath && fs.existsSync(existing.filePath)) {
+          try {
+            fs.unlinkSync(existing.filePath);
+          } catch {}
+        }
+        newFileName = videoFile.filename;
+        newFilePath = videoFile.path;
+
+        try {
+          const seconds = await getVideoDuration(newFilePath);
+          newDurationFormatted = formatDuration(seconds);
+        } catch (e) {
+          console.warn("Could not get video duration:", e);
+        }
+      }
+
+      // Clear YouTube-specific fields when switching to upload
+      if (existing.platform === "youtube" || platform === "upload") {
+        newYoutubeUrl = undefined;
+      }
+    }
+
+    // Thumbnail handling: optional for updates
+    if (thumbnailFile) {
+      // Delete previous thumbnail
+      if (existing.thumbnailPath && fs.existsSync(existing.thumbnailPath)) {
+        try {
+          fs.unlinkSync(existing.thumbnailPath);
+        } catch {}
+      }
+      newThumbnailPath = thumbnailFile.path;
+    }
+
+    // Apply simple field updates
+    if (typeof title !== "undefined") existing.title = title;
+    if (typeof description !== "undefined") existing.description = description;
+    if (typeof category !== "undefined") existing.category = category;
+    if (typeof subcategory !== "undefined") existing.subcategory = subcategory || undefined;
+
+    // Apply computed updates
+    existing.platform = targetPlatform;
+    existing.youtubeUrl = newYoutubeUrl;
+    existing.fileName = newFileName;
+    existing.filePath = newFilePath;
+    existing.thumbnailPath = newThumbnailPath;
+    existing.durationFormatted = newDurationFormatted;
+
+    await existing.save();
+
+    return res.status(httpStatus.OK).send(existing);
   } catch (error) {
     if (error instanceof mongoose.Error.ValidationError) {
       return res
@@ -322,7 +434,7 @@ export const deleteVideo = async (req: Request, res: Response) => {
 
     return res.status(httpStatus.NO_CONTENT).send();
   } catch (error) {
-    return res
+    return res  
       .status(httpStatus.INTERNAL_SERVER_ERROR)
       .send({ message: "Error deleting video" });
   }
