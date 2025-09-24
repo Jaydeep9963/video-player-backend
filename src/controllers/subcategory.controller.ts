@@ -3,6 +3,8 @@ import { Request, Response } from "express";
 import mongoose from "mongoose";
 import Subcategory from "../models/subcategory.model";
 import Video from "../models/video.model";
+import { getWebPath, normalizeWebPath } from '../utils/path';
+import { safeDeleteFile } from '../utils/fileUtils';
 
 /**
  * Create a subcategory
@@ -16,14 +18,21 @@ export const createSubcategory = async (req: Request, res: Response) => {
       ...req.body,
     };
 
-    // If a file was uploaded, save its path
+    // If a file was uploaded, save its normalized path
     if (req.file) {
-      payload.image = req.file.path;
+      payload.image = getWebPath(req.file);
     }
 
     const subcategory = await Subcategory.create(payload);
+    
+    // Normalize image path in response
+    const subcategoryObj = subcategory.toObject();
+    const normalizedSubcategory = {
+      ...subcategoryObj,
+      image: subcategoryObj.image ? normalizeWebPath(subcategoryObj.image) : subcategoryObj.image,
+    };
 
-    return res.status(httpStatus.CREATED).send(subcategory);
+    return res.status(httpStatus.CREATED).send(normalizedSubcategory);
   } catch (error: any) {
     console.error("Subcategory creation error:", error);
 
@@ -92,15 +101,18 @@ export const getSubcategories = async (req: Request, res: Response) => {
       options
     ).populate("category", "name");
 
-    // Add video count for each subcategory
+    // Add video count for each subcategory and normalize image paths
     const subcategoriesWithVideoCount = await Promise.all(
       subcategories.map(async (subcategory) => {
         const videoCount = await Video.countDocuments({
           subcategory: subcategory._id,
           isPublished: true,
         });
+        
+        const subcategoryObj = subcategory.toObject();
         return {
-          ...subcategory.toObject(),
+          ...subcategoryObj,
+          image: subcategoryObj.image ? normalizeWebPath(subcategoryObj.image) : subcategoryObj.image,
           videoCount,
         };
       })
@@ -132,7 +144,14 @@ export const getSubcategory = async (req: Request, res: Response) => {
         .send({ message: "Subcategory not found" });
     }
 
-    return res.status(httpStatus.OK).send(subcategory);
+    const subcategoryObj = subcategory.toObject();
+    // Normalize image path before sending response
+    const normalizedSubcategory = {
+      ...subcategoryObj,
+      image: subcategoryObj.image ? normalizeWebPath(subcategoryObj.image) : subcategoryObj.image,
+    };
+
+    return res.status(httpStatus.OK).send(normalizedSubcategory);
   } catch (error) {
     return res
       .status(httpStatus.INTERNAL_SERVER_ERROR)
@@ -148,9 +167,21 @@ export const getSubcategory = async (req: Request, res: Response) => {
  */
 export const updateSubcategory = async (req: Request, res: Response) => {
   try {
+    // Get existing subcategory first to handle old image deletion
+    const existingSubcategory = await Subcategory.findById(req.params.subcategoryId);
+    if (!existingSubcategory) {
+      return res
+        .status(httpStatus.NOT_FOUND)
+        .send({ message: "Subcategory not found" });
+    }
+
     // Add image path to request body if file was uploaded
     if (req.file) {
-      req.body.image = req.file.path;
+      // Delete old image if it exists
+      if (existingSubcategory.image) {
+        safeDeleteFile(existingSubcategory.image);
+      }
+      req.body.image = getWebPath(req.file);
     }
 
     const subcategory = await Subcategory.findByIdAndUpdate(
@@ -162,13 +193,14 @@ export const updateSubcategory = async (req: Request, res: Response) => {
       }
     ).populate("category", "name");
 
-    if (!subcategory) {
-      return res
-        .status(httpStatus.NOT_FOUND)
-        .send({ message: "Subcategory not found" });
-    }
+    // Normalize image path in response
+    const subcategoryObj = subcategory!.toObject();
+    const normalizedSubcategory = {
+      ...subcategoryObj,
+      image: subcategoryObj.image ? normalizeWebPath(subcategoryObj.image) : subcategoryObj.image,
+    };
 
-    return res.status(httpStatus.OK).send(subcategory);
+    return res.status(httpStatus.OK).send(normalizedSubcategory);
   } catch (error: any) {
     console.error("Subcategory update error:", error);
 
@@ -211,6 +243,11 @@ export const deleteSubcategory = async (req: Request, res: Response) => {
         .send({ message: "Subcategory not found" });
     }
 
+    // Clean up associated image file
+    if (subcategory.image) {
+      safeDeleteFile(subcategory.image);
+    }
+
     return res.status(httpStatus.NO_CONTENT).send();
   } catch (error) {
     return res
@@ -238,15 +275,18 @@ export const getSubcategoriesByCategory = async (
 
     const subcategories = await Subcategory.find(filter, null, options);
 
-    // Add video count for each subcategory
+    // Add video count for each subcategory and normalize image paths
     const subcategoriesWithVideoCount = await Promise.all(
       subcategories.map(async (subcategory) => {
         const videoCount = await Video.countDocuments({
           subcategory: subcategory._id,
           isPublished: true,
         });
+        
+        const subcategoryObj = subcategory.toObject();
         return {
-          ...subcategory.toObject(),
+          ...subcategoryObj,
+          image: subcategoryObj.image ? normalizeWebPath(subcategoryObj.image) : subcategoryObj.image,
           videoCount,
         };
       })

@@ -4,6 +4,8 @@ import mongoose from "mongoose";
 import Category from "../models/category.model";
 import Video from "../models/video.model";
 import Subcategory from "../models/subcategory.model";
+import { getWebPath, normalizeWebPath } from "../utils/path";
+import { safeDeleteFile } from "../utils/fileUtils";
 
 /**
  * Create a category
@@ -15,11 +17,19 @@ export const createCategory = async (req: Request, res: Response) => {
   try {
     // Add image path to request body if file was uploaded
     if (req.file) {
-      req.body.image = req.file.path;
+      req.body.image = getWebPath(req.file);
     }
 
     const category = await Category.create(req.body);
-    return res.status(httpStatus.CREATED).send(category);
+    
+    // Normalize image path in response
+    const categoryObj = category.toObject();
+    const normalizedCategory = {
+      ...categoryObj,
+      image: categoryObj.image ? normalizeWebPath(categoryObj.image) : categoryObj.image,
+    };
+
+    return res.status(httpStatus.CREATED).send(normalizedCategory);
   } catch (error) {
     if (error instanceof mongoose.Error.ValidationError) {
       return res
@@ -61,15 +71,18 @@ export const getCategories = async (req: Request, res: Response) => {
 
     const categories = await Category.find(filter, null, options);
 
-    // Add video count for each category
+    // Add video count for each category and normalize image paths
     const categoriesWithVideoCount = await Promise.all(
       categories.map(async (category) => {
         const [videoCount, subcategoryCount] = await Promise.all([
           Video.countDocuments({ category: category._id, isPublished: true }),
           Subcategory.countDocuments({ category: category._id }),
         ]);
+        
+        const categoryObj = category.toObject();
         return {
-          ...category.toObject(),
+          ...categoryObj,
+          image: categoryObj.image ? normalizeWebPath(categoryObj.image) : categoryObj.image,
           videoCount,
           subcategoryCount,
         };
@@ -100,7 +113,14 @@ export const getCategory = async (req: Request, res: Response) => {
         .send({ message: "Category not found" });
     }
 
-    return res.status(httpStatus.OK).send(category);
+    const categoryObj = category.toObject();
+    // Normalize image path before sending response
+    const normalizedCategory = {
+      ...categoryObj,
+      image: categoryObj.image ? normalizeWebPath(categoryObj.image) : categoryObj.image,
+    };
+
+    return res.status(httpStatus.OK).send(normalizedCategory);
   } catch (error) {
     return res
       .status(httpStatus.INTERNAL_SERVER_ERROR)
@@ -116,9 +136,21 @@ export const getCategory = async (req: Request, res: Response) => {
  */
 export const updateCategory = async (req: Request, res: Response) => {
   try {
-    // Add image path to request body if file was uploaded
+    // Get existing category first to handle old image deletion
+    const existingCategory = await Category.findById(req.params.categoryId);
+    if (!existingCategory) {
+      return res
+        .status(httpStatus.NOT_FOUND)
+        .send({ message: "Category not found" });
+    }
+
+    // Add new image path to request body if file was uploaded
     if (req.file) {
-      req.body.image = req.file.path;
+      // Delete old image if it exists
+      if (existingCategory.image) {
+        safeDeleteFile(existingCategory.image);
+      }
+      req.body.image = getWebPath(req.file);
     }
 
     const category = await Category.findByIdAndUpdate(
@@ -130,13 +162,14 @@ export const updateCategory = async (req: Request, res: Response) => {
       }
     );
 
-    if (!category) {
-      return res
-        .status(httpStatus.NOT_FOUND)
-        .send({ message: "Category not found" });
-    }
+    // Normalize image path in response
+    const categoryObj = category!.toObject();
+    const normalizedCategory = {
+      ...categoryObj,
+      image: categoryObj.image ? normalizeWebPath(categoryObj.image) : categoryObj.image,
+    };
 
-    return res.status(httpStatus.OK).send(category);
+    return res.status(httpStatus.OK).send(normalizedCategory);
   } catch (error) {
     if (error instanceof mongoose.Error.ValidationError) {
       return res
@@ -163,6 +196,11 @@ export const deleteCategory = async (req: Request, res: Response) => {
       return res
         .status(httpStatus.NOT_FOUND)
         .send({ message: "Category not found" });
+    }
+
+    // Clean up associated image file
+    if (category.image) {
+      safeDeleteFile(category.image);
     }
 
     return res.status(httpStatus.NO_CONTENT).send();
